@@ -1,0 +1,26 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 11
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADVpki", "ADVpki\ADVpki.csproj", "{B6ED1F56-CA74-47A1-986C-51ED17A14CC5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADVpki.Core", "ADVpki.Core\ADVpki.Core.csproj", "{D3AA85DD-388C-42E3-AAF7-CB535411C0DC}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B6ED1F56-CA74-47A1-986C-51ED17A14CC5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B6ED1F56-CA74-47A1-986C-51ED17A14CC5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B6ED1F56-CA74-47A1-986C-51ED17A14CC5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B6ED1F56-CA74-47A1-986C-51ED17A14CC5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D3AA85DD-388C-42E3-AAF7-CB535411C0DC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D3AA85DD-388C-42E3-AAF7-CB535411C0DC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D3AA85DD-388C-42E3-AAF7-CB535411C0DC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D3AA85DD-388C-42E3-AAF7-CB535411C0DC}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
