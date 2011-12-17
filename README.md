@@ -18,12 +18,15 @@ You can create certificate for servers (SSL/TLS), for clients (SSL/TLS client au
 
 # What are the command line options?
 
-- -a or --autority=<ca> Name of the certificate authority (CA). It is created if it does not yet exist.
-- -n or --name=<name> Name (subject) of the certificate
-- -u or --usage=<usage> Usage of the certificate (Server, Client or Code)
-- -m or --machine To store certificate in the machine store instead of the store of the current user (you need administrative rights)
-- -h or -? or --help To get some help about this tool
+ADVpki supports the following command line options:
 
+* -a or --autority=<ca> Name of the certificate authority (CA). It is created if it does not yet exist.
+* -n or --name=<name> Name (subject) of the certificate
+* -u or --usage=<usage> Usage of the certificate (Server, Client or Code)
+* -m or --machine To store certificate in the machine store instead of the store of the current user (you need administrative rights)
+* -h or -? or --help To get some help about this tool
+
+ 
 
 # How to build ADVpki
 
