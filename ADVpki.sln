@@ -5,6 +5,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADVpki", "ADVpki\ADVpki.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ADVpki.Core", "ADVpki.Core\ADVpki.Core.csproj", "{D3AA85DD-388C-42E3-AAF7-CB535411C0DC}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{D816447C-F25C-4827-A463-33591A225FEE}"
+	ProjectSection(SolutionItems) = preProject
+		COPYING = COPYING
+		README.md = README.md
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU

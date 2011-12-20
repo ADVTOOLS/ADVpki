@@ -31,6 +31,7 @@ namespace Advtools.ADVpki
         public string CertificateName { get; private set; }
         public CertificatesAuthority.Usage Usage { get; private set; }
         public bool MachineStore { get; private set; }
+        public string Pkcs10File { get; private set; }
         public bool Help { get; private set; }
 
         private readonly OptionSet options_ = null;
@@ -45,9 +46,10 @@ namespace Advtools.ADVpki
             options_ = new OptionSet()
             {
                 { "a|authority=", "Name of the certificate authority (CA)", (string o) => AuthorityName = o },
-                { "n|name=", "Name of the certificate", (string o) => CertificateName = o },
-                { "u|usage=", "Usage of the certificate (Server, Client, Code)", (CertificatesAuthority.Usage o) => Usage = o },
+                { "n|name=", "Name of the certificate (can also be a Distinguished Name)", (string o) => CertificateName = o },
+                { "u|usage=", "Usage of the certificate (Server, Client, Code, Authority)", (CertificatesAuthority.Usage o) => Usage = o },
                 { "m|machine", "Store certificates in the machine store", o => MachineStore = o != null },
+                { "s|sign=", "Sign a PKCS#10 request and generate the certificate", (string o) => Pkcs10File = o },
                 { "h|?|help", "Show this message", o => Help = o != null }
             };
         }

@@ -17,25 +17,32 @@
  */
 
 using System;
-using MSX509 = System.Security.Cryptography.X509Certificates;
-using System.Security.Cryptography;
-using System.Collections;
+using System.IO;
 using System.Collections.Generic;
-using Mono.Security.Authenticode;
-using Mono.Security.X509;
-using Mono.Security.X509.Extensions;
 using System.Diagnostics;
+using MSX509 = System.Security.Cryptography.X509Certificates;
+using Org.BouncyCastle.X509;
+using Org.BouncyCastle.Pkcs;
+using Org.BouncyCastle.Asn1.X509;
+using Org.BouncyCastle.Crypto.Generators;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Security;
+using Org.BouncyCastle.Crypto.Prng;
+using Org.BouncyCastle.Math;
+using Org.BouncyCastle.Crypto.Parameters;
+using Org.BouncyCastle.OpenSsl;
 
 namespace Advtools.ADVpki
 {
     public class CertificatesAuthority
     {
+        #region Public enumerations
         public enum Usage
         {
             /// <summary>
-            /// Certificate for a root Certification Authority
+            /// Certificate for a root Certification Authority (CA)
             /// </summary>
-            RootAuthority,
+            Authority,
             /// <summary>
             /// SSL/TLS Server certificate
             /// </summary>
@@ -49,54 +56,106 @@ namespace Advtools.ADVpki
             /// </summary>
             Code
         }
+        #endregion
 
+        #region Parameters
         private const int defaultCertificatesValidity_ = 2 * 365; // 2 years
         private const int defaultRootCertificateValidty_ = 10 * 365; // 10 years
-        private const string defaultName_ = "ADVpki Certification Authority";
+        #endregion
 
+        #region Constructors
         /// <summary>
         /// Construct a CertificatesAuthority object with a default name and in the store of the current user
         /// </summary>
-        public CertificatesAuthority()
+        /// <param name="name">Name of the certification authority.</param>
+        public CertificatesAuthority(string name)
         {
-            name_ = defaultName_;
+            authorityName_ = name != null ? X509NameFromString(name) : null;
             store_ = MSX509.StoreLocation.CurrentUser;
         }
         
         /// <summary>
         /// Construct a CertificatesAuthority object
         /// </summary>
-        /// <param name="name">Name of the certification authority</param>
+        /// <param name="name">Name of the certification authority.</param>
         /// <param name="store">Where to store the certificates</param>
         public CertificatesAuthority(string name, MSX509.StoreLocation store)
         {
-            name_ = name;
+            authorityName_ = name != null ? X509NameFromString(name) : null;
             store_ = store;
         }
 
+        #endregion
+
+        #region Public methods
         /// <summary>
-        /// Get or create a certificate if it does not yet exist
+        /// Generate a new certificate.
         /// </summary>
         /// <param name="name">Name (subject) of the certificate</param>
         /// <param name="usage">Usage of the certificate</param>
         /// <param name="validity">Validity of the certificate or 0 to use the default validity</param>
         /// <param name="storageLocation">Where to store the certificate</param>
         /// <returns>An existing certificate or a new certificate</returns>
-        public MSX509.X509Certificate2 GetCertificate(string name, Usage usage, int validity)
+        public MSX509.X509Certificate2 GenerateCertificate(string name, Usage usage, int validity)
         {
-            return InternalGetCertificate(name, usage, validity, MSX509.StoreName.My, GetRootCertificate());
+            MSX509.X509Certificate2 root = GetRootCertificate();
+            if(null == root && usage != Usage.Authority)
+                throw new ApplicationException("Root certificate not found");
+
+            return InternalGenerateCertificate(X509NameFromString(name), usage, validity, MSX509.StoreName.My, root);
+        }
+
+        public MSX509.X509Certificate2 SignRequest(string csrFile, Usage usage, int validity)
+        {
+            return SignRequest(csrFile, usage, validity, MSX509.StoreName.My);
+        }
+
+        public MSX509.X509Certificate2 SignRequest(string csrFile, Usage usage, int validity, MSX509.StoreName storeName)
+        {
+            Pkcs10CertificationRequest request = ReadPkcs10(csrFile);
+            var info = request.GetCertificationRequestInfo();
+            SubjectPublicKeyInfo publicKeyInfo = info.SubjectPublicKeyInfo; 
+
+            RsaPublicKeyStructure publicKeyStructure = RsaPublicKeyStructure.GetInstance(publicKeyInfo.GetPublicKey());
+            RsaKeyParameters publicKey = new RsaKeyParameters(false, publicKeyStructure.Modulus, publicKeyStructure.PublicExponent);
+
+            if(!request.Verify(publicKey))
+                throw new ApplicationException("The CSR is not valid: verification failed");
+
+            MSX509.X509Certificate2 root = GetRootCertificate();
+            if(root == null)
+                throw new ApplicationException("Root certificate not found");
+
+            return InternalGenerateCertificate(info.Subject, usage, validity, storeName, publicKey, null, DotNetUtilities.GetKeyPair(root.PrivateKey).Private);
+        }
+
+        #endregion
+
+        #region Internal methods
+
+        private static X509Name X509NameFromString(string name)
+        {
+            if(name.Contains("="))
+                return new X509Name(name);
+            return new X509Name("CN=" + name);
+        }
+
+        private Pkcs10CertificationRequest ReadPkcs10(string file)
+        {
+            using(TextReader reader = new StreamReader(file))
+            {
+                PemReader pem = new PemReader(reader);
+                return (Pkcs10CertificationRequest)pem.ReadObject();
+            }
         }
 
         private MSX509.X509Certificate2 GetRootCertificate()
         {
-            return InternalGetCertificate(name_, Usage.RootAuthority, defaultRootCertificateValidty_, MSX509.StoreName.Root, null);
+            return authorityName_ == null ? null : GetCertificate(authorityName_, Usage.Authority, defaultRootCertificateValidty_, MSX509.StoreName.Root, null);
         }
-        
-        private MSX509.X509Certificate2 InternalGetCertificate(string name, Usage usage, int validity, MSX509.StoreName storeName, MSX509.X509Certificate2 issuer)
-        {
-            // Get the exrtension for this usage
-            List<X509Extension> extensions = GetCertificateExtensions(usage);
 
+        private MSX509.X509Certificate2 GetCertificate(X509Name name, Usage usage, int validity, MSX509.StoreName storeName, MSX509.X509Certificate2 issuer)
+        {
             // Try to load the certificate from the machine store
             MSX509.X509Certificate2 certificate = LoadCertificate(name, storeName, MSX509.StoreLocation.LocalMachine);
             if(certificate != null)
@@ -107,122 +166,118 @@ namespace Advtools.ADVpki
             if(certificate != null)
                 return certificate;
 
+            return InternalGenerateCertificate(name, usage, validity, storeName, issuer);
+        }
+            
+        private MSX509.X509Certificate2 InternalGenerateCertificate(X509Name name, Usage usage, int validity, MSX509.StoreName storeName, MSX509.X509Certificate2 issuer)
+        {
             // Create a pair of keys
-            PrivateKey key = new PrivateKey();
-            key.RSA = RSA.Create();
+            RsaKeyPairGenerator keyGenerator = new RsaKeyPairGenerator();
+            keyGenerator.Init(new KeyGenerationParameters(new SecureRandom(new CryptoApiRandomGenerator()), 1024));
+            var keys = keyGenerator.GenerateKeyPair();
+
+            // Get the signator (issuer or itself in the case of a root certificate which is self-signed)
+            AsymmetricKeyParameter signator = issuer == null ? keys.Private : DotNetUtilities.GetKeyPair(issuer.PrivateKey).Private;
+
+            return InternalGenerateCertificate(name, usage, validity, storeName, keys.Public, keys.Private, signator);
+        }
+
+        private MSX509.X509Certificate2 InternalGenerateCertificate(X509Name name, Usage usage, int validity, MSX509.StoreName storeName, AsymmetricKeyParameter publicKey, AsymmetricKeyParameter privateKey, AsymmetricKeyParameter signator)
+        {
+            DateTime notBefore = DateTime.Now.AddDays(-1);
 
             // Build a X509v3 certificate
-            X509CertificateBuilder builder = new X509CertificateBuilder(3);
-            builder.SerialNumber = GenerateSerial();
-            builder.IssuerName = "CN=" + name_;
-            builder.SubjectName = "CN=" + name;
-            builder.SubjectPublicKey = key.RSA;
-            builder.NotBefore = DateTime.Now;
-            builder.NotAfter = builder.NotBefore.AddDays(validity == 0 ? defaultCertificatesValidity_ : validity);
-            builder.Hash = "SHA1";
+            X509V3CertificateGenerator builder = new X509V3CertificateGenerator();
+            builder.SetSerialNumber(new BigInteger(GenerateSerial()));
+            builder.SetIssuerDN(authorityName_ ?? name);
+            builder.SetSubjectDN(name);
+            builder.SetPublicKey(publicKey);
+            builder.SetNotBefore(notBefore);
+            builder.SetNotAfter(notBefore.AddDays(validity == 0 ? defaultCertificatesValidity_ : validity));
+            builder.SetSignatureAlgorithm("SHA1WithRSA");
 
             // Add the extensions
-            foreach(X509Extension extension in extensions)
-                builder.Extensions.Add(extension);
+            AddExtensions(builder, usage);
 
-            // Get the signator (issuer or itself in the case of a root certificate)
-            var signator = issuer == null ? key.RSA : issuer.PrivateKey;
             // Sign the certificate
-            byte[] raw = builder.Sign(signator);
+            X509Certificate newCertificate = builder.Generate(signator);
+
+            // Create a .NET X509Certificate2 from the BouncyCastle one and put the private key into it
+            MSX509.X509Certificate2 certificate = CreateCertificate(name, newCertificate, privateKey);
 
             // Store the certificate
-            StoreCertificate(name, raw, key.RSA, storeName);
+            StoreCertificate(name, certificate, storeName);
 
-            certificate = new MSX509.X509Certificate2(raw);
-            certificate.PrivateKey = key.RSA;
             return certificate;
         }
 
-        private List<X509Extension> GetCertificateExtensions(Usage usage)
+        private string GetFriendlyName(X509Name name)
         {
-            List<X509Extension> extensions = new List<X509Extension>();
-
-            switch(usage)
-            {
-                case Usage.Client: GetClientCertificateExtensions(extensions); break;
-                case Usage.Server: GetServerCertificateExtensions(extensions); break;
-                case Usage.Code: GetCodeCertificateExtensions(extensions); break;
-                case Usage.RootAuthority: GetRootAuthorityCertificateExtensions(extensions); break;
-                default: Debug.Assert(false, "Unknown usage value", "Unknown usage value: {0}", usage); break;
-            }
-
-            return extensions;
+            return (string)name.GetValues(X509Name.CN)[0];
         }
 
-        private void GetRootAuthorityCertificateExtensions(List<X509Extension> extensions)
+        private MSX509.X509Certificate2 CreateCertificate(X509Name name, X509Certificate certificate, AsymmetricKeyParameter privateKey)
         {
-            BasicConstraintsExtension constraints = new BasicConstraintsExtension();
-            constraints.CertificateAuthority = true;
-            constraints.Critical = true;
-            extensions.Add(constraints);
+            var pkcs12Store = new Pkcs12StoreBuilder().Build();
+            pkcs12Store.SetKeyEntry(GetFriendlyName(name), new AsymmetricKeyEntry(privateKey), new[] { new X509CertificateEntry(certificate) });
+            var data = new MemoryStream();
+            pkcs12Store.Save(data, pkcs12Password_.ToCharArray(), new SecureRandom(new CryptoApiRandomGenerator()));
 
-            KeyUsageExtension keyUsage = new KeyUsageExtension();
-            keyUsage.KeyUsage = KeyUsages.keyCertSign | KeyUsages.cRLSign;
-            extensions.Add(keyUsage);
-        }
+            MSX509.X509KeyStorageFlags storage = MSX509.X509KeyStorageFlags.Exportable | MSX509.X509KeyStorageFlags.PersistKeySet |
+                ((store_ == MSX509.StoreLocation.LocalMachine) ? MSX509.X509KeyStorageFlags.MachineKeySet : MSX509.X509KeyStorageFlags.UserKeySet);
 
-        private void GetClientCertificateExtensions(List<X509Extension> extensions)
-        {
-            BasicConstraintsExtension constraints = new BasicConstraintsExtension();
-            constraints.CertificateAuthority = false;
-            constraints.Critical = true;
-            extensions.Add(constraints);
-
-            KeyUsageExtension keyUsage = new KeyUsageExtension();
-            keyUsage.KeyUsage = KeyUsages.digitalSignature | KeyUsages.nonRepudiation | KeyUsages.keyEncipherment;
-            extensions.Add(keyUsage);
-
-            ExtendedKeyUsageExtension extendedUsage = new ExtendedKeyUsageExtension();
-            extendedUsage.KeyPurpose.Add("1.3.6.1.5.5.7.3.2"); // Client authentication
-            extensions.Add(extendedUsage);
-        }
-
-        private void GetServerCertificateExtensions(List<X509Extension> extensions)
-        {
-            BasicConstraintsExtension constraints = new BasicConstraintsExtension();
-            constraints.CertificateAuthority = false;
-            constraints.Critical = true;
-            extensions.Add(constraints);
-
-            KeyUsageExtension keyUsage = new KeyUsageExtension();
-            keyUsage.KeyUsage = KeyUsages.digitalSignature | KeyUsages.nonRepudiation | KeyUsages.keyEncipherment;
-            extensions.Add(keyUsage);
-
-            ExtendedKeyUsageExtension extendedUsage = new ExtendedKeyUsageExtension();
-            extendedUsage.KeyPurpose.Add("1.3.6.1.5.5.7.3.1"); // Server authentication
-            extendedUsage.KeyPurpose.Add("1.3.6.1.5.5.7.3.2"); // Client authentication
-            extensions.Add(extendedUsage);
-        }
-
-        private void GetCodeCertificateExtensions(List<X509Extension> extensions)
-        {
-            BasicConstraintsExtension constraints = new BasicConstraintsExtension();
-            constraints.CertificateAuthority = false;
-            constraints.Critical = true;
-            extensions.Add(constraints);
-
-            KeyUsageExtension keyUsage = new KeyUsageExtension();
-            keyUsage.KeyUsage = KeyUsages.digitalSignature | KeyUsages.nonRepudiation | KeyUsages.keyEncipherment;
-            extensions.Add(keyUsage);
-
-            ExtendedKeyUsageExtension extendedUsage = new ExtendedKeyUsageExtension();
-            extendedUsage.KeyPurpose.Add("1.3.6.1.5.5.7.3.3"); // Code signing
-            extensions.Add(extendedUsage);
+            return new MSX509.X509Certificate2(data.ToArray(), pkcs12Password_, storage);
         }
         
-        private MSX509.X509Certificate2 LoadCertificate(string name, MSX509.StoreName storeName, MSX509.StoreLocation location)
+        private void AddExtensions(X509V3CertificateGenerator builder, Usage usage)
+        {
+            switch(usage)
+            {
+                case Usage.Client: AddClientCertificateExtensions(builder); break;
+                case Usage.Server: AddServerCertificateExtensions(builder); break;
+                case Usage.Code: AddCodeCertificateExtensions(builder); break;
+                case Usage.Authority: AddRootAuthorityCertificateExtensions(builder); break;
+                default: Debug.Assert(false, "Unknown usage value", "Unknown usage value: {0}", usage); break;
+            }
+        }
+
+        private void AddRootAuthorityCertificateExtensions(X509V3CertificateGenerator builder)
+        {
+            builder.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(true));
+            builder.AddExtension(X509Extensions.KeyUsage, true, new KeyUsage(KeyUsage.KeyCertSign | KeyUsage.CrlSign));
+        }
+
+        private void AddClientCertificateExtensions(X509V3CertificateGenerator builder)
+        {
+            builder.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(false));
+            builder.AddExtension(X509Extensions.KeyUsage, true, new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.NonRepudiation | KeyUsage.KeyEncipherment));
+            builder.AddExtension(X509Extensions.ExtendedKeyUsage, true, new ExtendedKeyUsage(KeyPurposeID.IdKPClientAuth));
+        }
+
+        private void AddServerCertificateExtensions(X509V3CertificateGenerator builder)
+        {
+            builder.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(false));
+            builder.AddExtension(X509Extensions.KeyUsage, true, new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.NonRepudiation | KeyUsage.KeyEncipherment));
+            builder.AddExtension(X509Extensions.ExtendedKeyUsage, true, new ExtendedKeyUsage(KeyPurposeID.IdKPClientAuth, KeyPurposeID.IdKPServerAuth));
+        }
+
+        private void AddCodeCertificateExtensions(X509V3CertificateGenerator builder)
+        {
+            builder.AddExtension(X509Extensions.BasicConstraints, true, new BasicConstraints(false));
+            builder.AddExtension(X509Extensions.KeyUsage, true, new KeyUsage(KeyUsage.DigitalSignature | KeyUsage.NonRepudiation | KeyUsage.KeyEncipherment));
+            builder.AddExtension(X509Extensions.ExtendedKeyUsage, true, new ExtendedKeyUsage(KeyPurposeID.IdKPCodeSigning));
+        }
+
+        private MSX509.X509Certificate2 LoadCertificate(X509Name name, MSX509.StoreName storeName, MSX509.StoreLocation location)
         {
             if(certificates_.ContainsKey(name))
                 return certificates_[name];
 
+            string dn = name.ToString();
+
             MSX509.X509Store store = new MSX509.X509Store(storeName, location);
             store.Open(MSX509.OpenFlags.ReadOnly);
-            var certificates = store.Certificates.Find(MSX509.X509FindType.FindBySubjectName, name, true);
+            var certificates = store.Certificates.Find(MSX509.X509FindType.FindBySubjectDistinguishedName, dn, true);
             store.Close();
 
             if(certificates.Count <= 0)
@@ -241,29 +296,8 @@ namespace Advtools.ADVpki
             return serial;
         }
 
-        private PKCS12 BuildPkcs12(byte[] raw, RSA key)
+        private void StoreCertificate(X509Name name, MSX509.X509Certificate2 certificate, MSX509.StoreName storeName)
         {
-            PKCS12 p12 = new PKCS12();
-            p12.Password = "advtools";
-
-            ArrayList list = new ArrayList();
-            // we use a fixed array to avoid endianess issues (in case some tools requires the ID to be 1).
-            list.Add(new byte[4] { 1, 0, 0, 0 });
-            Hashtable attributes = new Hashtable(1);
-            attributes.Add(PKCS9.localKeyId, list);
-
-            p12.AddCertificate(new X509Certificate(raw), attributes);
-            p12.AddPkcs8ShroudedKeyBag(key, attributes);
-
-            return p12;
-        }
-
-        private void StoreCertificate(string name, byte[] raw, RSA key, MSX509.StoreName storeName)
-        {
-            PKCS12 p12 = BuildPkcs12(raw, key);
-
-            MSX509.X509Certificate2 certificate = new MSX509.X509Certificate2(p12.GetBytes(), "advtools", MSX509.X509KeyStorageFlags.PersistKeySet | MSX509.X509KeyStorageFlags.MachineKeySet | MSX509.X509KeyStorageFlags.Exportable);
-
             MSX509.X509Store store = new MSX509.X509Store(storeName, store_);
             store.Open(MSX509.OpenFlags.ReadWrite);
             store.Add(certificate);
@@ -271,9 +305,14 @@ namespace Advtools.ADVpki
 
             certificates_[name] = certificate;
         }
-        
-        private readonly string name_;
+
+        #endregion
+
+        #region Instance fields
+        private const string pkcs12Password_ = "advtools";
+        private readonly X509Name authorityName_;
         private MSX509.StoreLocation store_;
-        private Dictionary<string, MSX509.X509Certificate2> certificates_ = new Dictionary<string, MSX509.X509Certificate2>();
+        private Dictionary<X509Name, MSX509.X509Certificate2> certificates_ = new Dictionary<X509Name, MSX509.X509Certificate2>();
+        #endregion
     }
 }

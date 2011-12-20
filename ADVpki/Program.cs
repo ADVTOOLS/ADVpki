@@ -39,7 +39,10 @@ namespace Advtools.ADVpki
                 StoreLocation store = options.MachineStore ? StoreLocation.LocalMachine : StoreLocation.CurrentUser;
 
                 CertificatesAuthority ca = new CertificatesAuthority(options.AuthorityName, store);
-                ca.GetCertificate(options.CertificateName, options.Usage, 0);
+                if(options.Pkcs10File != null)
+                    ca.SignRequest(options.Pkcs10File, options.Usage, 0);
+                else
+                    ca.GenerateCertificate(options.CertificateName, options.Usage, 0);
             }
             catch(Exception ex)
             {
@@ -53,7 +56,7 @@ namespace Advtools.ADVpki
             if(!options.ParseCommandLine(args))
                 return null;
 
-            if(string.IsNullOrWhiteSpace(options.AuthorityName))
+            if(string.IsNullOrWhiteSpace(options.AuthorityName) && options.Usage != CertificatesAuthority.Usage.Authority)
             {
                 Console.WriteLine("Invalid name of the certificate authority");
                 Console.WriteLine();
@@ -61,9 +64,17 @@ namespace Advtools.ADVpki
                 return null;
             }
 
-            if(string.IsNullOrWhiteSpace(options.CertificateName))
+            if(string.IsNullOrWhiteSpace(options.CertificateName) && string.IsNullOrWhiteSpace(options.Pkcs10File))
             {
-                Console.WriteLine("Invalid name of the certificate");
+                Console.WriteLine("Please provide a name for the certificate or the name of a PKCS#10 file");
+                Console.WriteLine();
+                options.ShowUsage();
+                return null;
+            }
+
+            if(!string.IsNullOrWhiteSpace(options.CertificateName) && !string.IsNullOrWhiteSpace(options.Pkcs10File))
+            {
+                Console.WriteLine("Please provide either a name for the certificate or the name of a PKCS#10 file but not both");
                 Console.WriteLine();
                 options.ShowUsage();
                 return null;
