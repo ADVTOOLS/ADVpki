@@ -24,8 +24,8 @@ ADVpki supports the following command line options:
 * -n or --name=<name> Name (subject) of the certificate
 * -u or --usage=<usage> Usage of the certificate (Server, Client or Code)
 * -m or --machine To store certificate in the machine store instead of the store of the current user (you need administrative rights)
+* -s or --sign=<pkcs10 file> To sign a PKCS#10 Certification Signing Request (CSR) file
 * -h or -? or --help To get some help about this tool
-
  
 
 # How to build ADVpki
